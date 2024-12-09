@@ -118,7 +118,6 @@ app.post('/predict', async (req, res) => {
 
         const result = tf.tidy(() => {
             const imageBuffer = Buffer.from(base64, 'base64');
-            console.log('Before prediction:', tf.memory());
             const tensor = tf.node.decodeImage(imageBuffer, 3)
                 .resizeBilinear([224, 224])
                 .div(tf.scalar(255))
@@ -126,7 +125,6 @@ app.post('/predict', async (req, res) => {
 
             const prediction = datas.model.predict(tensor);
             const predictionData = prediction.arraySync(); // Synchronous array fetch
-            console.log('After prediction:', tf.memory());
 
             const confidenceThreshold = 0.8;
             const maxIndex = predictionData[0].indexOf(Math.max(...predictionData[0]));

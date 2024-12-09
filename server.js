@@ -116,28 +116,24 @@ app.post('/predict', async (req, res) => {
             return res.status(400).json({ error: 'No image data provided' });
         }
 
-        const imageBuffer = Buffer.from(base64, 'base64');
+        const result = tf.tidy(() => {
+            const imageBuffer = Buffer.from(base64, 'base64');
+            const tensor = tf.node.decodeImage(imageBuffer, 3)
+                .resizeBilinear([224, 224])
+                .div(tf.scalar(255))
+                .expandDims(0);
 
+            const prediction = datas.model.predict(tensor);
+            const predictionData = prediction.arraySync(); // Synchronous array fetch
 
-        // Decode image, preprocess, and predict
-        const tensor = tf.node.decodeImage(imageBuffer, 3) // Decode to RGB
-            .resizeBilinear([224, 224]) // Resize to model input size
-            .div(tf.scalar(255)) // Normalize to [0, 1]
-            .expandDims(0); // Add batch dimension
+            const confidenceThreshold = 0.8;
+            const maxIndex = predictionData[0].indexOf(Math.max(...predictionData[0]));
+            const confidence = Math.max(...predictionData[0]);
 
-        const confidenceThreshold = 0.8; // Minimum confidence for prediction
-        let result = { label: 'Unknown', confidence: 0 };
-
-        const labels = datas.labels;
-
-        const prediction = datas.model.predict(tensor);
-        const predictionData = await prediction.array();
-        const maxIndex = predictionData[0].indexOf(Math.max(...predictionData[0]));
-        const confidence = Math.max(...predictionData[0]);
-        // Check if confidence meets threshold
-        if (confidence > confidenceThreshold) {
-            result = { label: labels[maxIndex], confidence };
-        }
+            return confidence > confidenceThreshold
+                ? { label: datas.labels[maxIndex], confidence }
+                : { label: 'Unknown', confidence };
+        });
 
         res.json(result);
     } catch (err) {

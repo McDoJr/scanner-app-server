@@ -5,6 +5,14 @@ const os = require('os');
 const {supabase} = require("./supabase");
 require('dotenv').config();
 
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err);
+});
+
 // Set up Express app
 const app = express();
 app.use(cors());
@@ -17,25 +25,20 @@ const getSignedUrls = async () => {
             .from('models')
             .getPublicUrl('model2/model.json');
 
-
-
         const { data: weightsUrl, error: weightsError } = supabase
             .storage
             .from('models')
             .getPublicUrl('model2/weights.bin');
-
 
         const { data: metaData, error: metaDataError } = supabase
             .storage
             .from('models')
             .getPublicUrl('model2/metadata.json');
 
-
         if (modelJsonError || weightsError || metaDataError) {
-            console.error('Error generating signed URLs:', modelJsonError || weightsError);
+            console.error('Error generating signed URLs:', modelJsonError || weightsError || metaDataError);
             return null;
         }
-
 
         return {
             modelJsonUrl: modelJsonUrl.publicUrl,
@@ -43,7 +46,7 @@ const getSignedUrls = async () => {
             metaDataUrl: metaData.publicUrl
         };
     } catch (error) {
-        console.error('Error:', error);
+        console.error('Error during URL fetch:', error);
         return null;
     }
 };
@@ -71,6 +74,7 @@ const fetchLabels = async (url) => {
 //     'file://./models/model2/model.json',
 // ];
 let datas = {model: undefined, labels: []};
+let modelLoaded = false;
 (async () => {
     try {
         // for (const path of modelPaths) {
@@ -85,6 +89,7 @@ let datas = {model: undefined, labels: []};
             const labels = await fetchLabels(signUrls.metaDataUrl);
             console.log("Labels has been loaded");
             datas = {model, labels};
+            modelLoaded = true;
         }
     } catch (err) {
         console.error('Error loading models:', err);
@@ -94,6 +99,10 @@ let datas = {model: undefined, labels: []};
 // Prediction route
 app.post('/predict', async (req, res) => {
     try {
+
+        if (!modelLoaded) {
+            return res.status(500).json({ error: 'Model not loaded' });
+        }
 
         if(!datas) return res.status(500).json({ error: 'Model and labels not loaded' });
 

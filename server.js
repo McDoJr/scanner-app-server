@@ -105,31 +105,9 @@ const returnWorker = (worker) => {
     workerQueue.push(worker);
 }
 
-// Worker thread function
-function runWorker(payload) {
-    return new Promise((resolve, reject) => {
-        const { model, labels } = datas;
-        const worker = new Worker('./worker.js', { workerData: { model, labels } });
-        // This will log if the worker is instantiated correctly
-        console.log("Worker created, sending data:");
-        worker.postMessage(payload);
-
-        worker.on('message', resolve);
-        worker.on('error', reject);
-        worker.on('exit', (code) => {
-            if (code !== 0) reject(new Error(`Worker stopped with exit code ${code}`));
-        });
-    });
-}
 
 // Prediction endpoint
 app.post('/predict', async (req, res) => {
-
-    const { model, labels } = datas;
-    if(!modelLoaded || !model || !labels) {
-        console.log("Model not loaded!");
-        return res.status(400).json({ error: 'Model not loaded' });
-    }
 
     const { base64 } = req.body;
 

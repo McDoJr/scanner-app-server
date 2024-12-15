@@ -40,13 +40,7 @@ let datas = {model: undefined, labels: []};
 
 parentPort.on('message', async (data) => {
 
-    const { base64, test } = data;
-
-    if(test) {
-        console.log("Testing received!");
-        return;
-    }
-    console.log("predicting start ....");
+    const { base64 } = data;
 
     try {
         const result = tf.tidy(() => {

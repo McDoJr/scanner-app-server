@@ -6,6 +6,9 @@ const {supabase} = require("./supabase");
 const tf = require("@tensorflow/tfjs-node");
 require('dotenv').config();
 
+console.log(`Running Node.js version: ${process.version}`);
+
+
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });

@@ -73,8 +73,6 @@ const createWorker = () => {
             },
         });
 
-        worker.postMessage({test: "Loading test"})
-
         worker.on('message', (message) => {
             if (message === 'ready') {
                 console.log('Worker ready.');

@@ -30,6 +30,7 @@ let datas = {model: undefined, labels: []};
             console.log("Labels has been loaded");
             datas = {model, labels};
             modelLoaded = true;
+            parentPort.postMessage('ready'); // Notify server that worker is ready
         }
     } catch (err) {
         console.error('Error loading models:', err);

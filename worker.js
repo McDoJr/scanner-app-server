@@ -1,12 +1,28 @@
 const { parentPort, workerData } = require('worker_threads');
 const tf = require('@tensorflow/tfjs-node');
 
-console.log("Worker script initialized: " + workerData);
+if (parentPort) {
+    console.log("Worker ready to receive messages");
+    parentPort.on('message', async (data) => {
+        console.log("Worker received data:", data);
+
+        try {
+            // Your worker logic here
+            const result = { success: true }; // Example response
+            parentPort.postMessage(result);
+        } catch (error) {
+            console.error("Error in worker:", error);
+            parentPort.postMessage({ error: error.message });
+        }
+    });
+} else {
+    console.error("Parent port not available in worker");
+}
 
 
-parentPort.on('message', async (data) => {
+parentPort.on('message', async () => {
 
-    const { base64, model, labels } = data;
+    const { base64, model, labels } = workerData;
 
     console.log("model:" + !!model + " labels: " + labels);
 

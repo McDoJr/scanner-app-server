@@ -95,6 +95,8 @@ const fetchLabels = async (url) => {
 function runWorker(payload) {
     return new Promise((resolve, reject) => {
         const worker = new Worker('./worker.js', { workerData: payload });
+        // This will log if the worker is instantiated correctly
+        console.log("Worker created, sending data:", payload);
         worker.on('message', resolve);
         worker.on('error', reject);
         worker.on('exit', (code) => {

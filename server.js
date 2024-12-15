@@ -25,6 +25,10 @@ app.use(express.json({ limit: "10mb" }));
 let datas = {model: undefined, labels: []};
 let modelLoaded = false;
 
+const WORKER_COUNT = 2; // Number of workers to preload
+const workers = [];
+const workerQueue = [];
+
 const getSignedUrls = async () => {
     try {
         const { data: modelJsonUrl, error: modelJsonError } = supabase
@@ -58,38 +62,50 @@ const getSignedUrls = async () => {
     }
 };
 
-const fetchLabels = async (url) => {
-    try {
-        const response = await fetch(url);
+let signUrls = null;
 
-        if(!response.ok) {
-            console.log("Error fetching labels from url")
-            return null;
-        }
-        const metadata = await response.json();
-        return metadata.labels;
-    }catch (error) {
-        console.log("Error fetching labels");
-        return null;
-    }
+const createWorker = () => {
+    return new Promise((resolve, reject) => {
+        const worker = new Worker('./worker.js', {
+            workerData: {
+                modelJsonUrl: signUrls.modelJsonUrl,
+                metaDataUrl: signUrls.metaDataUrl,
+            },
+        });
+
+        worker.postMessage({test: "Loading test"})
+
+        worker.on('message', (message) => {
+            if (message === 'ready') {
+                console.log('Worker ready.');
+                workers.push(worker);
+                resolve();
+            }
+        });
+
+        worker.on('error', (err) => {
+            console.error('Worker error:', err);
+            reject(err);
+        });
+
+        worker.on('exit', (code) => {
+            if (code !== 0) console.error(`Worker exited with code ${code}`);
+        });
+
+        workerQueue.push(worker); // Add worker to the queue
+    });
 }
 
-// Load model and labels once
-(async () => {
-    try {
-        const signUrls = await getSignedUrls();
-        if(signUrls) {
-            const model = await tf.loadLayersModel(signUrls.modelJsonUrl);
-            console.log("v2: Model has been loaded!");
-            const labels = await fetchLabels(signUrls.metaDataUrl);
-            console.log("v2: Labels has been loaded");
-            datas = {model, labels};
-            modelLoaded = true;
-        }
-    } catch (err) {
-        console.error('Error loading models:', err);
+const getAvailableWorker = () => {
+    if (workerQueue.length === 0) {
+        throw new Error('No workers available');
     }
-})();
+    return workerQueue.shift();
+}
+
+const returnWorker = (worker) => {
+    workerQueue.push(worker);
+}
 
 // Worker thread function
 function runWorker(payload) {
@@ -125,14 +141,15 @@ app.post('/predict', async (req, res) => {
     }
 
     try {
-        console.log("Predicting...")
-        const result = await runWorker({ base64, model, labels });
-        console.log("Result received!")
-        if(result.error) {
-            console.log("Error during prediction")
-            return res.status(500).json({ error: 'Error during prediction attemp' });
-        }
+        const worker = getAvailableWorker();
 
+        const result = await new Promise((resolve, reject) => {
+            worker.once('message', resolve);
+            worker.once('error', reject);
+            worker.postMessage({ base64 });
+        });
+
+        returnWorker(worker); // Return the worker to the queue
         res.json(result);
     } catch (err) {
         console.error(err);
@@ -142,4 +159,13 @@ app.post('/predict', async (req, res) => {
 
 const HOST = '0.0.0.0';
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, HOST, () => console.log(`Server running on ${HOST}:${PORT}`));
+
+(async () => {
+    console.log('Preloading urls...');
+    signUrls = await getSignedUrls();
+    console.log('Urls loaded');
+    console.log('Preloading workers...');
+    await Promise.all(Array.from({ length: WORKER_COUNT }, createWorker));
+    console.log(`All ${WORKER_COUNT} workers ready.`);
+    app.listen(PORT, HOST, () => console.log(`Server running on ${HOST}:${PORT}`));
+})();

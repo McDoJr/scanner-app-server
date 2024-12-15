@@ -1,31 +1,51 @@
 const { parentPort, workerData } = require('worker_threads');
 const tf = require('@tensorflow/tfjs-node');
 
-if (parentPort) {
-    console.log("Worker ready to receive messages");
-    parentPort.on('message', async (data) => {
+const fetchLabels = async (url) => {
+    try {
+        const response = await fetch(url);
 
-        try {
-            // Your worker logic here
-            const result = { success: true }; // Example response
-            parentPort.postMessage(result);
-        } catch (error) {
-            console.error("Error in worker:", error);
-            parentPort.postMessage({ error: error.message });
+        if(!response.ok) {
+            console.log("Error fetching labels from url")
+            return null;
         }
-    });
-} else {
-    console.error("Parent port not available in worker");
+        const metadata = await response.json();
+        return metadata.labels;
+    }catch (error) {
+        console.log("Error fetching labels");
+        return null;
+    }
 }
+
+let modelLoaded = false;
+let datas = {model: undefined, labels: []};
+
+(async () => {
+    try {
+        const { modelJsonUrl, metaDataUrl } = workerData;
+        if(modelJsonUrl && metaDataUrl) {
+            const model = await tf.loadLayersModel(modelJsonUrl);
+            console.log("Model has been loaded!");
+            const labels = await fetchLabels(metaDataUrl);
+            console.log("Labels has been loaded");
+            datas = {model, labels};
+            modelLoaded = true;
+        }
+    } catch (err) {
+        console.error('Error loading models:', err);
+    }
+})();
 
 
 parentPort.on('message', async (data) => {
 
-    console.log("predicting start ....")
+    const { base64, test } = data;
 
-    const { model, labels, base64 } = data;
-
-    console.log(data);
+    if(test) {
+        console.log("Testing received!");
+        return;
+    }
+    console.log("predicting start ....");
 
     try {
         const result = tf.tidy(() => {
@@ -35,7 +55,7 @@ parentPort.on('message', async (data) => {
                 .div(tf.scalar(255))
                 .expandDims(0);
 
-            const prediction = model.predict(tensor);
+            const prediction = datas.model.predict(tensor);
             const predictionData = prediction.arraySync(); // Synchronous array fetch
 
             const confidenceThreshold = 0.8;
@@ -43,7 +63,7 @@ parentPort.on('message', async (data) => {
             const confidence = Math.max(...predictionData[0]);
 
             return confidence > confidenceThreshold
-                ? { label: labels[maxIndex], confidence }
+                ? { label: data.labels[maxIndex], confidence }
                 : { label: 'Unknown', confidence };
         });
 

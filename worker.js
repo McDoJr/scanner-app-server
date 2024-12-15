@@ -25,6 +25,8 @@ parentPort.on('message', async (data) => {
 
     const { model, labels, base64 } = data;
 
+    console.log(data);
+
     try {
         const result = tf.tidy(() => {
             const imageBuffer = Buffer.from(base64, 'base64');

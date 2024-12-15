@@ -22,6 +22,8 @@ if (parentPort) {
 
 parentPort.on('message', async () => {
 
+    console.log("predicting start ....")
+
     const { base64, model, labels } = workerData;
 
     console.log("model:" + !!model + " labels: " + labels);

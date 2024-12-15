@@ -96,7 +96,7 @@ function runWorker(payload) {
     return new Promise((resolve, reject) => {
         const worker = new Worker('./worker.js', { workerData: payload });
         // This will log if the worker is instantiated correctly
-        console.log("Worker created, sending data:", payload);
+        console.log("Worker created, sending data:");
         worker.on('message', resolve);
         worker.on('error', reject);
         worker.on('exit', (code) => {
@@ -110,19 +110,23 @@ app.post('/predict', async (req, res) => {
 
     const { model, labels } = datas;
     if(!modelLoaded || !model || !labels) {
+        console.log("Model not loaded!");
         return res.status(400).json({ error: 'Model not loaded' });
     }
 
     const { base64 } = req.body;
 
     if (!base64) {
+        console.log("Image not provided")
         return res.status(400).json({ error: 'No image data provided' });
     }
 
     try {
+        console.log("Predicting...")
         const result = await runWorker({ base64, model, labels });
-
+        console.log("Result received!")
         if(result.error) {
+            console.log("Error during prediction")
             return res.status(500).json({ error: 'Error during prediction attemp' });
         }
 

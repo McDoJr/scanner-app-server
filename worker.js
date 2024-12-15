@@ -1,5 +1,6 @@
 const { parentPort, workerData } = require('worker_threads');
 const tf = require('@tensorflow/tfjs-node');
+const {supabase} = require("./supabase");
 
 let datas = {model: undefined, labels: []};
 let modelLoaded = false;
@@ -37,15 +38,31 @@ const getSignedUrls = async () => {
     }
 };
 
+const fetchLabels = async (url) => {
+    try {
+        const response = await fetch(url);
+
+        if(!response.ok) {
+            console.log("Error fetching labels from url")
+            return null;
+        }
+        const metadata = await response.json();
+        return metadata.labels;
+    }catch (error) {
+        console.log("Error fetching labels");
+        return null;
+    }
+}
+
 // Load model and labels once
 (async () => {
     try {
         const signUrls = await getSignedUrls();
         if(signUrls) {
             const model = await tf.loadLayersModel(signUrls.modelJsonUrl);
-            console.log("Model has been loaded!");
+            console.log("v2: Model has been loaded!");
             const labels = await fetchLabels(signUrls.metaDataUrl);
-            console.log("Labels has been loaded");
+            console.log("v2: Labels has been loaded");
             datas = {model, labels};
             modelLoaded = true;
         }

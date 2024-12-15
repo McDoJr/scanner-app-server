@@ -94,9 +94,12 @@ const fetchLabels = async (url) => {
 // Worker thread function
 function runWorker(payload) {
     return new Promise((resolve, reject) => {
-        const worker = new Worker('./worker.js', { workerData: payload });
+        const { model, labels } = datas;
+        const worker = new Worker('./worker.js', { workerData: { model, labels } });
         // This will log if the worker is instantiated correctly
         console.log("Worker created, sending data:");
+        worker.postMessage(payload);
+
         worker.on('message', resolve);
         worker.on('error', reject);
         worker.on('exit', (code) => {
@@ -123,7 +126,7 @@ app.post('/predict', async (req, res) => {
 
     try {
         console.log("Predicting...")
-        const result = await runWorker({ base64, model, labels });
+        const result = await runWorker({ base64 });
         console.log("Result received!")
         if(result.error) {
             console.log("Error during prediction")

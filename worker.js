@@ -20,13 +20,12 @@ if (parentPort) {
 }
 
 
-parentPort.on('message', async () => {
+parentPort.on('message', async (data) => {
 
     console.log("predicting start ....")
 
-    const { base64, model, labels } = workerData;
-
-    console.log("model:" + !!model + " labels: " + labels);
+    const { model, labels } = workerData;
+    const { base64 } = data;
 
     try {
         const result = tf.tidy(() => {

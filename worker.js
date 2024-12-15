@@ -1,7 +1,7 @@
 const { parentPort, workerData } = require('worker_threads');
 const tf = require('@tensorflow/tfjs-node');
 
-console.log("Worker script initialized");
+console.log("Worker script initialized: " + workerData);
 
 
 parentPort.on('message', async (data) => {

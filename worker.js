@@ -4,7 +4,6 @@ const tf = require('@tensorflow/tfjs-node');
 if (parentPort) {
     console.log("Worker ready to receive messages");
     parentPort.on('message', async (data) => {
-        console.log("Worker received data:", data);
 
         try {
             // Your worker logic here
@@ -24,8 +23,7 @@ parentPort.on('message', async (data) => {
 
     console.log("predicting start ....")
 
-    const { model, labels } = workerData;
-    const { base64 } = data;
+    const { model, labels, base64 } = data;
 
     try {
         const result = tf.tidy(() => {

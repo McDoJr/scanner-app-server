@@ -126,7 +126,7 @@ app.post('/predict', async (req, res) => {
 
     try {
         console.log("Predicting...")
-        const result = await runWorker({ base64 });
+        const result = await runWorker({ base64, model, labels });
         console.log("Result received!")
         if(result.error) {
             console.log("Error during prediction")

@@ -1,13 +1,9 @@
-// server.js
 const express = require('express');
+const tf = require('@tensorflow/tfjs-node');
 const cors = require('cors');
-const { Worker } = require('worker_threads');
+const os = require('os');
 const {supabase} = require("./supabase");
-const tf = require("@tensorflow/tfjs-node");
 require('dotenv').config();
-
-console.log(`Running Node.js version: ${process.version}`);
-
 
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
@@ -21,13 +17,6 @@ process.on('uncaughtException', (err) => {
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
-
-let datas = {model: undefined, labels: []};
-let modelLoaded = false;
-
-const WORKER_COUNT = 2; // Number of workers to preload
-const workers = [];
-const workerQueue = [];
 
 const getSignedUrls = async () => {
     try {
@@ -62,70 +51,90 @@ const getSignedUrls = async () => {
     }
 };
 
-let signUrls = null;
-
-const createWorker = () => {
-    return new Promise((resolve, reject) => {
-        const worker = new Worker('./worker.js', {
-            workerData: {
-                modelJsonUrl: signUrls.modelJsonUrl,
-                metaDataUrl: signUrls.metaDataUrl,
-            },
-        });
-
-        worker.on('message', (message) => {
-            if (message === 'ready') {
-                console.log('Worker ready.');
-                workers.push(worker);
-                resolve();
-            }
-        });
-
-        worker.on('error', (err) => {
-            console.error('Worker error:', err);
-            reject(err);
-        });
-
-        worker.on('exit', (code) => {
-            if (code !== 0) console.error(`Worker exited with code ${code}`);
-        });
-
-        workerQueue.push(worker); // Add worker to the queue
-    });
-}
-
-const getAvailableWorker = () => {
-    if (workerQueue.length === 0) {
-        throw new Error('No workers available');
-    }
-    return workerQueue.shift();
-}
-
-const returnWorker = (worker) => {
-    workerQueue.push(worker);
-}
-
-
-// Prediction endpoint
-app.post('/predict', async (req, res) => {
-
-    const { base64 } = req.body;
-
-    if (!base64) {
-        console.log("Image not provided")
-        return res.status(400).json({ error: 'No image data provided' });
-    }
-
+const fetchLabels = async (url) => {
     try {
-        const worker = getAvailableWorker();
+        const response = await fetch(url);
 
-        const result = await new Promise((resolve, reject) => {
-            worker.once('message', resolve);
-            worker.once('error', reject);
-            worker.postMessage({ base64 });
+        if(!response.ok) {
+            console.log("Error fetching labels from url")
+            return null;
+        }
+        const metadata = await response.json();
+        return metadata.labels;
+    }catch (error) {
+        console.log("Error fetching labels");
+        return null;
+    }
+}
+
+// Load the model
+// let models = [];
+// const modelPaths = [
+//     'file://./models/model1/model.json',
+//     'file://./models/model2/model.json',
+// ];
+let datas = {model: undefined, labels: []};
+let modelLoaded = false;
+(async () => {
+    try {
+        // for (const path of modelPaths) {
+        //     const model = await tf.loadLayersModel(path);
+        //     models.push(model);
+        //     console.log(`Model loaded from ${path}`);
+        // }
+        const signUrls = await getSignedUrls();
+        if(signUrls) {
+            const model = await tf.loadLayersModel(signUrls.modelJsonUrl);
+            console.log("Model has been loaded!");
+            const labels = await fetchLabels(signUrls.metaDataUrl);
+            console.log("Labels has been loaded");
+            datas = {model, labels};
+            modelLoaded = true;
+        }
+    } catch (err) {
+        console.error('Error loading models:', err);
+    }
+})();
+
+// Prediction route
+app.post('/predict', async (req, res) => {
+    try {
+
+        if (!modelLoaded) {
+            return res.status(500).json({ error: 'Model not loaded' });
+        }
+
+        if(!datas) return res.status(500).json({ error: 'Model and labels not loaded' });
+
+        if (!datas.model) {
+            return res.status(500).json({ error: 'Model not loaded' });
+        }
+
+        const { base64 } = req.body;
+
+        if (!base64) {
+            return res.status(400).json({ error: 'No image data provided' });
+        }
+
+        const result = tf.tidy(() => {
+            const imageBuffer = Buffer.from(base64, 'base64');
+            const tensor = tf.node.decodeImage(imageBuffer, 3)
+                .resizeBilinear([224, 224])
+                .div(tf.scalar(255))
+                .expandDims(0);
+
+            const prediction = datas.model.predict(tensor);
+            const predictionData = prediction.arraySync(); // Synchronous array fetch
+
+            const confidenceThreshold = 0.8;
+            const maxIndex = predictionData[0].indexOf(Math.max(...predictionData[0]));
+            const confidence = Math.max(...predictionData[0]);
+
+            return confidence > confidenceThreshold
+                ? { label: datas.labels[maxIndex], confidence }
+                : { label: 'Unknown', confidence };
         });
 
-        returnWorker(worker); // Return the worker to the queue
         res.json(result);
     } catch (err) {
         console.error(err);
@@ -134,14 +143,5 @@ app.post('/predict', async (req, res) => {
 });
 
 const HOST = '0.0.0.0';
-const PORT = process.env.PORT || 3000;
-
-(async () => {
-    console.log('Preloading urls...');
-    signUrls = await getSignedUrls();
-    console.log('Urls loaded');
-    console.log('Preloading workers...');
-    await Promise.all(Array.from({ length: WORKER_COUNT }, createWorker));
-    console.log(`All ${WORKER_COUNT} workers ready.`);
-    app.listen(PORT, HOST, () => console.log(`Server running on ${HOST}:${PORT}`));
-})();
+const PORT = process.env.PORT;
+app.listen(PORT, HOST, () => console.log("Server running on " + (HOST) + ":" + PORT));

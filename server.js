@@ -1,14 +1,14 @@
 const express = require('express');
 const tf = require('@tensorflow/tfjs-node');
 const cors = require('cors');
-const { supabase } = require('./supabase');
-const fetch = require('node-fetch');
+const os = require('os');
+const {supabase} = require("./supabase");
 require('dotenv').config();
 
-// Handle exceptions and rejections
 process.on('unhandledRejection', (reason, promise) => {
     console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
+
 process.on('uncaughtException', (err) => {
     console.error('Uncaught Exception:', err);
 });
@@ -16,126 +16,97 @@ process.on('uncaughtException', (err) => {
 // Set up Express app
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: "10mb" }));
 
-let model;
-let labels = [];
-let modelLoaded = false;
-
-// Function to fetch dataset images from Supabase
-const getImagesFromSupabase = async () => {
+const getSignedUrls = async () => {
     try {
-        const { data: files, error } = await supabase
+        const { data: modelJsonUrl, error: modelJsonError } = supabase
             .storage
             .from('models')
-            .list('datasets/', { prefix: 'datasets/' });
+            .getPublicUrl('model2/model.json');
 
-        if (error) {
-            console.error('Error fetching files:', error);
+        const { data: weightsUrl, error: weightsError } = supabase
+            .storage
+            .from('models')
+            .getPublicUrl('model2/weights.bin');
+
+        const { data: metaData, error: metaDataError } = supabase
+            .storage
+            .from('models')
+            .getPublicUrl('model2/metadata.json');
+
+        if (modelJsonError || weightsError || metaDataError) {
+            console.error('Error generating signed URLs:', modelJsonError || weightsError || metaDataError);
             return null;
         }
 
-        // Filter and organize images by class
-        const imageClasses = {};
-        for (const file of files) {
-            const className = file.name.split('/')[1]; // Extract class name
-            const imageUrl = supabase.storage.from('models').getPublicUrl(file.name).publicUrl;
-
-            if (!imageClasses[className]) {
-                imageClasses[className] = [];
-            }
-            imageClasses[className].push(imageUrl);
-        }
-
-        return imageClasses;
+        return {
+            modelJsonUrl: modelJsonUrl.publicUrl,
+            weightsUrl: weightsUrl.publicUrl,
+            metaDataUrl: metaData.publicUrl
+        };
     } catch (error) {
-        console.error('Error fetching images:', error);
+        console.error('Error during URL fetch:', error);
         return null;
     }
 };
 
-// Function to fetch the MobileNet base model
-const loadBaseModel = async () => {
+const fetchLabels = async (url) => {
     try {
-        model = await tf.loadLayersModel('https://storage.googleapis.com/tfjs-models/tfjs/mobilenet_v2_1.0_224/model.json');
-        console.log('MobileNet base model loaded.');
-    } catch (error) {
-        console.error('Error loading the model:', error);
-    }
-};
+        const response = await fetch(url);
 
-// Function to prepare image tensor
-const prepareImage = (imageUrl) => {
-    return new Promise((resolve, reject) => {
-        fetch(imageUrl)
-            .then(response => response.buffer())
-            .then(imageBuffer => {
-                const tensor = tf.node.decodeImage(imageBuffer)
-                    .resizeBilinear([224, 224])
-                    .div(tf.scalar(255))
-                    .expandDims(0);
-                resolve(tensor);
-            })
-            .catch(reject);
-    });
-};
-
-// Train model using dataset from Supabase
-const trainModel = async () => {
-    try {
-        const imageClasses = await getImagesFromSupabase();
-        if (!imageClasses) return;
-
-        const classNames = Object.keys(imageClasses);
-        labels = classNames;
-
-        // Prepare images and labels for training
-        const imageTensors = [];
-        const classLabels = [];
-        for (const [className, imageUrls] of Object.entries(imageClasses)) {
-            for (const imageUrl of imageUrls) {
-                const tensor = await prepareImage(imageUrl);
-                imageTensors.push(tensor);
-                classLabels.push(classNames.indexOf(className)); // Use index as class label
-            }
+        if(!response.ok) {
+            console.log("Error fetching labels from url")
+            return null;
         }
-
-        const xs = tf.concat(imageTensors, 0);
-        const ys = tf.tensor(classLabels, [classLabels.length], 'int32');
-
-        // Fine-tuning MobileNet: remove the final layer and add custom layers
-        const baseModel = model;
-        const x = baseModel.layers[baseModel.layers.length - 2].output; // Remove the last layer
-        const x2 = tf.layers.dense({ units: 128, activation: 'relu' }).apply(x);
-        const output = tf.layers.dense({ units: labels.length, activation: 'softmax' }).apply(x2);
-        const newModel = tf.model({ inputs: baseModel.inputs, outputs: output });
-
-        newModel.compile({ optimizer: 'adam', loss: 'sparseCategoricalCrossentropy', metrics: ['accuracy'] });
-
-        // Train the model
-        await newModel.fit(xs, ys, { epochs: 5, batchSize: 32 });
-        console.log('Training complete.');
-
-        // Save the fine-tuned model
-        await newModel.save('file://./fine_tuned_model');
-        console.log('Fine-tuned model saved.');
-        model = newModel;
-        modelLoaded = true;
-    } catch (error) {
-        console.error('Error during training:', error);
+        const metadata = await response.json();
+        return metadata.labels;
+    }catch (error) {
+        console.log("Error fetching labels");
+        return null;
     }
-};
+}
 
-// Load model and start training
+// Load the model
+// let models = [];
+// const modelPaths = [
+//     'file://./models/model1/model.json',
+//     'file://./models/model2/model.json',
+// ];
+let datas = {model: undefined, labels: []};
+let modelLoaded = false;
 (async () => {
-    await loadBaseModel();
-    await trainModel();
+    try {
+        // for (const path of modelPaths) {
+        //     const model = await tf.loadLayersModel(path);
+        //     models.push(model);
+        //     console.log(`Model loaded from ${path}`);
+        // }
+        const signUrls = await getSignedUrls();
+        if(signUrls) {
+            const model = await tf.loadLayersModel(signUrls.modelJsonUrl);
+            console.log("Model has been loaded!");
+            const labels = await fetchLabels(signUrls.metaDataUrl);
+            console.log("Labels has been loaded");
+            datas = {model, labels};
+            modelLoaded = true;
+        }
+    } catch (err) {
+        console.error('Error loading models:', err);
+    }
 })();
 
 // Prediction route
 app.post('/predict', async (req, res) => {
     try {
+
         if (!modelLoaded) {
+            return res.status(500).json({ error: 'Model not loaded' });
+        }
+
+        if(!datas) return res.status(500).json({ error: 'Model and labels not loaded' });
+
+        if (!datas.model) {
             return res.status(500).json({ error: 'Model not loaded' });
         }
 
@@ -145,32 +116,32 @@ app.post('/predict', async (req, res) => {
             return res.status(400).json({ error: 'No image data provided' });
         }
 
-        const prediction = tf.tidy(() => {
+        const result = tf.tidy(() => {
             const imageBuffer = Buffer.from(base64, 'base64');
             const tensor = tf.node.decodeImage(imageBuffer, 3)
                 .resizeBilinear([224, 224])
                 .div(tf.scalar(255))
                 .expandDims(0);
 
-            const prediction = model.predict(tensor);
-            const predictionData = prediction.arraySync(); // Get prediction array
+            const prediction = datas.model.predict(tensor);
+            const predictionData = prediction.arraySync(); // Synchronous array fetch
 
+            const confidenceThreshold = 0.8;
             const maxIndex = predictionData[0].indexOf(Math.max(...predictionData[0]));
             const confidence = Math.max(...predictionData[0]);
 
-            return {
-                label: labels[maxIndex],
-                confidence
-            };
+            return confidence > confidenceThreshold
+                ? { label: datas.labels[maxIndex], confidence }
+                : { label: 'Unknown', confidence };
         });
 
-        res.json(prediction);
-    } catch (error) {
-        console.error('Error during prediction:', error);
+        res.json(result);
+    } catch (err) {
+        console.error(err);
         res.status(500).json({ error: 'Error during prediction' });
     }
 });
 
 const HOST = '0.0.0.0';
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, HOST, () => console.log(`Server running on ${HOST}:${PORT}`));
+const PORT = process.env.PORT;
+app.listen(PORT, HOST, () => console.log("Server running on " + (HOST) + ":" + PORT));
